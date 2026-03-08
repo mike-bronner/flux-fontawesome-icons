@@ -2,131 +2,168 @@
 
 declare(strict_types=1);
 
-namespace App\Console\Commands;
+namespace MikeBronner\FontAwesomeToFluxImporter\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 
-class ConvertFontAwesomeToFluxCommand extends Command
+class ImportCommand extends Command
 {
     // phpcs:disable SlevomatCodingStandard.TypeHints.PropertyTypeHint.MissingAnyTypeHint
-    protected $signature = "flux:convert-fontawesome";
+    protected $signature = "flux:import-fontawesome";
     protected $description = "Convert FontAwesome SVG icons to Flux icons";
     // phpcs:enable
 
     public function handle(): void
     {
+        $package = $this->resolvePackage();
+
+        if (! $package) {
+            $this->error("No FontAwesome package found in node_modules/@fortawesome/.");
+
+            return;
+        }
+
+        $this->info("Using @fortawesome/{$package}.");
+
         Storage::deleteDirectory("resources/views/flux/icon/fontawesome");
-        $this->processIcons("", "regular", "solid");
-        $this->processIcons("brands", "brands", "brands");
-        // $this->processIcons("light", "light", "solid");
-        // $this->processIcons("thin", "thin", "solid");
-        // $this->processIcons( "duotone", "duotone-regular", "duotone");
-        // $this->processIcons( "duotone/light", "duotone-light", "duotone");
-        // $this->processIcons( "duotone/thin", "duotone-thin", "duotone");
-        // $this->processIcons("sharp", "sharp-regular", "sharp-solid");
-        // $this->processIcons("sharp/light", "sharp-light", "sharp-solid");
-        // $this->processIcons("sharp/thin", "sharp-thin", "sharp-solid");
-        // $this->processIcons( "sharp/duotone", "sharp-duotone-regular", "sharp-duotone-solid");
-        // $this->processIcons( "sharp/duotone/light", "sharp-duotone-light", "sharp-duotone-solid");
-        // $this->processIcons( "sharp/duotone/thin", "sharp-duotone-thin", "sharp-duotone-solid");
+        $this->processIcons($package, "", "regular", "solid");
+        $this->processIcons($package, "brands", "brands", "brands");
+        $this->processIcons($package, "light", "light", "solid");
+        $this->processIcons($package, "thin", "thin", "solid");
+        $this->processIcons($package, "duotone", "duotone-regular", "duotone");
+        $this->processIcons($package, "duotone/light", "duotone-light", "duotone");
+        $this->processIcons($package, "duotone/thin", "duotone-thin", "duotone");
+        $this->processIcons($package, "sharp", "sharp-regular", "sharp-solid");
+        $this->processIcons($package, "sharp/light", "sharp-light", "sharp-solid");
+        $this->processIcons($package, "sharp/thin", "sharp-thin", "sharp-solid");
+        $this->processIcons($package, "sharp/duotone", "sharp-duotone-regular", "sharp-duotone-solid");
+        $this->processIcons($package, "sharp/duotone/light", "sharp-duotone-light", "sharp-duotone-solid");
+        $this->processIcons($package, "sharp/duotone/thin", "sharp-duotone-thin", "sharp-duotone-solid");
     }
 
-    public function processIcons(
+    protected function resolvePackage(): string
+    {
+        $proPath = base_path("node_modules/@fortawesome/fontawesome-pro");
+        $freePath = base_path("node_modules/@fortawesome/fontawesome-free");
+
+        if (is_dir($proPath)) {
+            return "fontawesome-pro";
+        }
+
+        if (is_dir($freePath)) {
+            return "fontawesome-free";
+        }
+
+        return "";
+    }
+
+    protected function processIcons(
+        string $package,
         string $family,
         string $outlineVariant,
         string $solidVariant,
     ): void {
-        $family = $family
+        $familyPath = $family
             ? "/{$family}"
             : "";
-        $sourceDirs = [
-            base_path("node_modules/@fortawesome/fontawesome-free/svgs/{$outlineVariant}"),
-            base_path("node_modules/@fortawesome/fontawesome-free/svgs/{$solidVariant}"),
-        ];
-        $targetDir = resource_path("views/flux/icon/fontawesome{$family}");
-        $stub = file_get_contents(base_path("stubs/flux/icon.blade.php"));
+        $outlineDir = base_path("node_modules/@fortawesome/{$package}/svgs/{$outlineVariant}");
+        $solidDir = base_path("node_modules/@fortawesome/{$package}/svgs/{$solidVariant}");
+
+        if (! is_dir($outlineDir) && ! is_dir($solidDir)) {
+            return;
+        }
+
+        $targetDir = resource_path("views/flux/icon/fontawesome{$familyPath}");
+        $stub = $this->loadStub();
 
         if (! file_exists($targetDir)) {
             mkdir($targetDir, 0755, true);
         }
 
-        foreach ($sourceDirs as $sourceDir) {
-            $svgFiles = glob($sourceDir . "/*.svg");
+        $iconNames = $this->collectIconNames(outlineDir: $outlineDir, solidDir: $solidDir);
+
+        foreach ($iconNames as $iconName) {
+            $targetFile = "{$targetDir}/{$iconName}.blade.php";
+
+            $outlineSvg = $this->extractSvgContent(package: $package, variant: $outlineVariant, iconName: $iconName);
+            $solidSvg = $this->extractSvgContent(package: $package, variant: $solidVariant, iconName: $iconName);
+            $svgAttributes = $this->extractSvgAttributes(package: $package, variant: $outlineVariant, iconName: $iconName)
+                ?: $this->extractSvgAttributes(package: $package, variant: $solidVariant, iconName: $iconName);
+
+            $outlineSvg = $outlineSvg ?: $solidSvg;
+            $solidSvg = $solidSvg ?: $outlineSvg;
+
+            if (! $outlineSvg && ! $solidSvg) {
+                continue;
+            }
+
+            $bladeContent = str_replace(
+                ["{SVG_ATTRIBUTES}", "{OUTLINE}", "{SOLID}"],
+                [$svgAttributes, $outlineSvg, $solidSvg],
+                $stub,
+            );
+
+            file_put_contents($targetFile, $bladeContent);
+            $this->info("Converted: {$targetFile}");
+        }
+
+        $this->info("Converted {$family} icons successfully.");
+    }
+
+    protected function loadStub(): string
+    {
+        $publishedStub = base_path("stubs/flux/icon.blade.php");
+        $packageStub = __DIR__ . "/../../../stubs/flux/icon.blade.php";
+        $stubPath = file_exists($publishedStub)
+            ? $publishedStub
+            : $packageStub;
+
+        return file_get_contents($stubPath);
+    }
+
+    protected function collectIconNames(string $outlineDir, string $solidDir): array
+    {
+        $names = [];
+
+        foreach ([$outlineDir, $solidDir] as $dir) {
+            $svgFiles = glob($dir . "/*.svg") ?: [];
 
             foreach ($svgFiles as $svgFile) {
-                $iconName = pathinfo($svgFile, PATHINFO_FILENAME);
-                $targetFile = "{$targetDir}/{$iconName}.blade.php";
-
-                $svgContent = file_get_contents($svgFile);
-
-                $svgAttributes = $this->parseSvgAttributes($svgContent);
-                $solidInnerSvg = $this->parseSvgContent($sourceDir, $solidVariant, $iconName);
-                $regularInnerSvg = $this->parseSvgContent($sourceDir, $outlineVariant, $svgContent)
-                    ?: $solidInnerSvg;
-// dd($sourceDir, $solidInnerSvg, $regularInnerSvg);
-                $bladeContent = str_replace(
-                    ['{SVG_ATTRIBUTES}', '{OUTLINE}', '{SOLID}'],
-                    [$svgAttributes, $regularInnerSvg, $solidInnerSvg],
-                    $stub,
-                );
-                file_put_contents($targetFile, $bladeContent);
-
-                $this->info("Converted: {$targetFile}");
+                $names[] = pathinfo($svgFile, PATHINFO_FILENAME);
             }
         }
 
-        $this->info("All FontAwesome SVGs have been converted to Flux Blade icons.");
+        return array_unique($names);
     }
 
-    protected function parseSvgAttributes(string $svgContent): string
+    protected function extractSvgContent(string $package, string $variant, string $iconName): string
     {
-        $attrMatch = [];
-        preg_match('/<svg\s+([^>]*)>/i', $svgContent, $attrMatch);
+        $iconPath = base_path("node_modules/@fortawesome/{$package}/svgs/{$variant}/{$iconName}.svg");
 
-        return data_get($attrMatch, 1)
-            ?? "";
-    }
-
-    // protected function parseRegularSvgContent(string $svgContent): string
-    // {
-    //     $innerMatch = [];
-    //     preg_match('/<svg[^>]*>(.*?)<\/svg>/is', $svgContent, $innerMatch);
-
-    //     return data_get($innerMatch, 1)
-    //         ?: "";
-    // }
-
-    protected function parseSvgContent(string $path, string $variant, string $iconName): string
-    {
-        $matches = [];
-        $iconPath = base_path("node_modules/@fortawesome/fontawesome-free/svgs/{$variant}/{$iconName}.svg");
-        $innerSvg = "";
-
-        if (file_exists($iconPath)) {
-            $svgContent = file_get_contents($iconPath);
-            preg_match('/<svg[^>]*>(.*?)<\/svg>/is', $svgContent, $matches);
-            $innerSvg = data_get($matches, 1)
-                ?: "";
+        if (! file_exists($iconPath)) {
+            return "";
         }
 
-        return $innerSvg;
+        $svgContent = file_get_contents($iconPath);
+        $matches = [];
+        preg_match("/<svg[^>]*>(.*?)<\/svg>/is", $svgContent, $matches);
+
+        return data_get($matches, 1) ?: "";
     }
 
-    // protected function parseSolidSvgContent(string $path, string $solidVariant, string $iconName): string
-    // {
-    //     $solidIconPath = base_path(
-    //         "node_modules/@fortawesome/fontawesome-pro/svgs/{$solidVariant}/{$iconName}.svg",
-    //     );
-    //     $solidInnerSvg = "";
+    protected function extractSvgAttributes(string $package, string $variant, string $iconName): string
+    {
+        $iconPath = base_path("node_modules/@fortawesome/{$package}/svgs/{$variant}/{$iconName}.svg");
 
-    //     if (file_exists($solidIconPath)) {
-    //         $solidSvgContent = file_get_contents($solidIconPath);
-    //         preg_match('/<svg[^>]*>(.*?)<\/svg>/is', $solidSvgContent, $solidMatch);
-    //         $solidInnerSvg = data_get($solidMatch, 1)
-    //             ?: "";
-    //     }
+        if (! file_exists($iconPath)) {
+            return "";
+        }
 
-    //     return $solidInnerSvg;
-    // }
+        $svgContent = file_get_contents($iconPath);
+        $matches = [];
+        preg_match("/<svg\s+([^>]*)>/i", $svgContent, $matches);
+
+        return data_get($matches, 1) ?? "";
+    }
 }

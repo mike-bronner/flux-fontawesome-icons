@@ -1,0 +1,58 @@
+{
+    "name": "genealabs/font-awesome-to-flux-importer",
+    "description": "Convert FontAwesome SVG icons to Flux Blade icon components for Laravel apps.",
+    "keywords": [
+        "laravel",
+        "flux",
+        "fontawesome",
+        "font-awesome",
+        "icons",
+        "svg",
+        "blade",
+        "converter",
+        "importer"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Mike Bronner",
+            "role": "Developer"
+        }
+    ],
+    "type": "library",
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-laravel": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MikeBronner\\FontAwesomeToFluxImporter\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MikeBronner\\FontAwesomeToFluxImporter\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "MikeBronner\\FontAwesomeToFluxImporter\\Providers\\ServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
