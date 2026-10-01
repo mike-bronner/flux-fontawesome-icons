@@ -15,12 +15,19 @@ function svgIcon(string $path): string
 
 function fakeTarball(array $svgs): string
 {
+    return rawTarball(collect($svgs)
+        ->mapWithKeys(fn (string $path, string $file) => ["svgs/{$file}" => svgIcon($path)])
+        ->all());
+}
+
+function rawTarball(array $files): string
+{
     $dir = storage_path("framework/testing/fontawesome/" . Str::random(8));
     File::ensureDirectoryExists($dir);
     $tar = new PharData("{$dir}/fixture.tar");
 
-    foreach ($svgs as $file => $path) {
-        $tar->addFromString("package/svgs/{$file}", svgIcon($path));
+    foreach ($files as $file => $contents) {
+        $tar->addFromString("package/{$file}", $contents);
     }
 
     $tar->compress(Phar::GZ);

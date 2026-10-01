@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use MikeBronner\FontAwesomeToFluxImporter\Providers\ServiceProvider;
@@ -95,6 +96,87 @@ it("downloads Pro with the token and generates every family", function () {
     Http::assertSent(fn (Request $request) => str_starts_with($request->url(), "https://npm.fontawesome.com/")
         && $request->header("Authorization") === ["Bearer " . PRO_TOKEN]);
     Http::assertNotSent(fn (Request $request) => $request->header("Authorization") !== ["Bearer " . PRO_TOKEN]);
+});
+
+it("shows a spinner and a progress bar instead of a line per icon", function () {
+    config(["font-awesome-to-flux.token" => PRO_TOKEN]);
+    fakeProRegistry(proSvgs());
+
+    expect(Artisan::call("flux:import-fontawesome"))->toBe(0)
+        ->and(Artisan::output())
+        ->toContain("Downloading @fortawesome/fontawesome-pro...")
+        ->toContain("Using @fortawesome/fontawesome-pro 7.0.0.")
+        ->toContain("Generating Flux icons")
+        ->toContain("0 / 13")
+        ->toContain("7 / 13")
+        ->toContain("13 / 13")
+        ->toContain("Generated 13 icons.")
+        ->not->toContain("Converted")
+        ->not->toContain("Generating 13 icons...")
+        ->not->toContain(PRO_TOKEN);
+});
+
+it("prints plain lines without terminal control codes when there is no interactive terminal", function () {
+    fakeFreeRegistry(["7.3.1" => fakeTarball(freeSvgs())], "7.3.1");
+
+    expect(Artisan::call("flux:import-fontawesome", ["--no-interaction" => true]))->toBe(0)
+        ->and(Artisan::output())->toBe(implode(PHP_EOL, [
+            "FONTAWESOME_NPM_TOKEN is not set, so FontAwesome Free is used.",
+            "Downloading @fortawesome/fontawesome-free...",
+            "Using @fortawesome/fontawesome-free 7.3.1.",
+            "Generating 4 icons...",
+            "Generated 4 icons.",
+            "",
+        ]))
+        ->and(generatedIcon("heart"))->toBeFile()
+        ->and(generatedIcon("brands/github"))->toBeFile();
+});
+
+it("fails with a plain error and no token when there is no interactive terminal", function (Closure $fakeRegistry, string $error) {
+    config(["font-awesome-to-flux.token" => PRO_TOKEN]);
+    $fakeRegistry();
+
+    expect(Artisan::call("flux:import-fontawesome", ["--no-interaction" => true]))->toBe(1)
+        ->and(Artisan::output())
+        ->toContain("Downloading @fortawesome/fontawesome-pro...")
+        ->toContain($error)
+        ->not->toContain("\e[")
+        ->not->toContain(PRO_TOKEN);
+})->with([
+    "token rejected" => [
+        fn () => fakeProRegistry(proSvgs(), metadataStatus: 401),
+        "FontAwesome's registry rejected FONTAWESOME_NPM_TOKEN (HTTP 401).",
+    ],
+    "connection error" => [
+        fn () => Http::fake(fn () => throw new ConnectionException("cURL error 6 for " . PRO_METADATA_URL)),
+        "Could not connect to https://npm.fontawesome.com.",
+    ],
+]);
+
+it("counts only the icons it wrote", function (array $options, string $progress) {
+    fakeFreeRegistry(["7.3.1" => rawTarball([
+        "svgs/regular/heart.svg" => svgIcon("M-heart"),
+        "svgs/regular/broken.svg" => "not an svg",
+    ])], "7.3.1");
+
+    expect(Artisan::call("flux:import-fontawesome", $options))->toBe(0)
+        ->and(Artisan::output())
+        ->toContain($progress)
+        ->toContain("Generated 1 icon.")
+        ->and(generatedIcon("heart"))->toBeFile()
+        ->and(generatedIcon("broken"))->not->toBeFile();
+})->with([
+    "progress bar" => [[], "2 / 2"],
+    "plain lines" => [["--no-interaction" => true], "Generating 2 icons..."],
+]);
+
+it("finishes without a progress bar when the package has no icons", function () {
+    fakeFreeRegistry(["7.3.1" => rawTarball(["svgs/README.md" => "no icons"])], "7.3.1");
+
+    expect(Artisan::call("flux:import-fontawesome"))->toBe(0)
+        ->and(Artisan::output())
+        ->toContain("Generated 0 icons.")
+        ->not->toContain("Generating Flux icons");
 });
 
 it("downloads Free from the public registry without authentication when no token is set", function (?string $token) {

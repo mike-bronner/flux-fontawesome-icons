@@ -84,6 +84,8 @@ php artisan flux:import-fontawesome
 
 The command downloads the package, states which package and version it used, converts every SVG into a Blade component, and writes them to `resources/views/flux/icon/fontawesome/`.
 
+In a terminal, the command shows a spinner during the download and a progress bar while it generates the icons. Without an interactive terminal, as in CI, or with `--no-interaction`, it prints one plain line per step. Either way, it ends with the number of icons it generated.
+
 If the registry rejects the token, the command says so and exits with a non-zero status. It never prints the token.
 
 ### Using the icons

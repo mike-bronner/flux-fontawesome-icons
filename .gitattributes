@@ -1,0 +1,4 @@
+# The artisan shim runs this repository's development tools, so it stays out of
+# the Composer dist archive.
+/artisan export-ignore
+# mike-bronner/laravel-development-settings: project entries go below this line. Anything above it is lost on the next sync.
