@@ -16,7 +16,7 @@ The command downloads the Font Awesome package itself. Your app does not need No
 ### 1. Install the Composer package
 
 ```bash
-composer require genealabs/font-awesome-to-flux-importer
+composer require mike-bronner/flux-fontawesome-icons
 ```
 
 The service provider is auto-discovered — no manual registration needed.
