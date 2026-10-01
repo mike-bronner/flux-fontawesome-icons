@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="FONTAWESOME_NPM_TOKEN" value=""/>
+        <env name="FONTAWESOME_VERSION" value=""/>
+        <env name="FONTAWESOME_CLASSIC_WEIGHT" value=""/>
+        <env name="FONTAWESOME_SHARP_WEIGHT" value=""/>
+        <env name="FONTAWESOME_DUOTONE_WEIGHT" value=""/>
+        <env name="FONTAWESOME_SHARP_DUOTONE_WEIGHT" value=""/>
+    </php>
+</phpunit>

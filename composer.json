@@ -23,9 +23,14 @@
     "require": {
         "php": "^8.2",
         "illuminate/console": "^11.0|^12.0|^13.0",
-        "illuminate/support": "^11.0|^12.0|^13.0"
+        "illuminate/filesystem": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "laravel/prompts": "^0.1.20|^0.2|^0.3"
     },
     "require-dev": {
+        "mike-bronner/clean-code": "^0.2.1",
+        "mike-bronner/laravel-development-settings": "^0.5.2",
         "orchestra/testbench": "^9.0|^10.0|^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-laravel": "^4.0"
@@ -50,6 +55,8 @@
     "config": {
         "sort-packages": true,
         "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "mike-bronner/laravel-development-settings": true,
             "pestphp/pest-plugin": true
         }
     },
