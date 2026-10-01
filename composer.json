@@ -1,5 +1,5 @@
 {
-    "name": "genealabs/font-awesome-to-flux-importer",
+    "name": "mike-bronner/flux-fontawesome-icons",
     "description": "Convert FontAwesome SVG icons to Flux Blade icon components for Laravel apps.",
     "keywords": [
         "laravel",
