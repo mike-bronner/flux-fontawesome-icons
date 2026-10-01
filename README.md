@@ -30,12 +30,20 @@ To get Pro, set your Font Awesome npm package token:
 ```dotenv
 FONTAWESOME_NPM_TOKEN=your-package-token
 FONTAWESOME_VERSION=7.1.0
+FONTAWESOME_CLASSIC_WEIGHT=regular
+FONTAWESOME_SHARP_WEIGHT=light
+FONTAWESOME_DUOTONE_WEIGHT=regular
+FONTAWESOME_SHARP_DUOTONE_WEIGHT=thin
 ```
 
 | Variable | Purpose |
 |----------|---------|
 | `FONTAWESOME_NPM_TOKEN` | Your Font Awesome npm package token. When it is set, the command downloads `@fortawesome/fontawesome-pro` from `npm.fontawesome.com`. When it is empty, it downloads Free. |
 | `FONTAWESOME_VERSION` | The package version to download. When it is empty, the latest version is used. |
+| `FONTAWESOME_CLASSIC_WEIGHT` | The outline weight of the classic family: `regular`, `light`, or `thin`. |
+| `FONTAWESOME_SHARP_WEIGHT` | The outline weight of the sharp family. Pro only. |
+| `FONTAWESOME_DUOTONE_WEIGHT` | The outline weight of the duotone family. Pro only. |
+| `FONTAWESOME_SHARP_DUOTONE_WEIGHT` | The outline weight of the sharp duotone family. Pro only. |
 
 To publish the config file to `config/font-awesome-to-flux.php`:
 
@@ -44,6 +52,25 @@ php artisan vendor:publish --tag=font-awesome-to-flux-config
 ```
 
 There is no command-line option for the token. A token on the command line lands in your shell history and in process lists.
+
+### 3. Choose the outline weight of each family
+
+The command generates every family in the package on every run: classic, sharp, duotone, and sharp duotone, plus brands. Each family gets one outline weight, `regular`, `light`, or `thin`. That weight becomes the family's Flux `outline` variant. The `solid` variant is always the family's own solid style, so there is nothing to choose for it.
+
+When a family has no configured weight:
+
+- In a terminal, the command asks for the weight of that family, after the download.
+- Without an interactive terminal, as in CI or with `--no-interaction`, the command uses `regular`. It never waits for input.
+
+Set a weight for every family in CI, so every build generates the same icons.
+
+The `light` and `thin` weights and every family other than classic need Pro. Without `FONTAWESOME_NPM_TOKEN`:
+
+- The command generates classic (regular and solid) and brands only, and asks nothing.
+- It skips the sharp, duotone, and sharp duotone families, even when their weights are set.
+- It stops with an error and a non-zero exit when `FONTAWESOME_CLASSIC_WEIGHT` is `light` or `thin`. It stops before the download, and the existing icons stay in place.
+
+A weight other than `regular`, `light`, or `thin` stops the command with an error that lists the accepted values.
 
 ## Keeping the token secret
 
@@ -84,7 +111,7 @@ php artisan flux:import-fontawesome
 
 The command downloads the package, states which package and version it used, converts every SVG into a Blade component, and writes them to `resources/views/flux/icon/fontawesome/`.
 
-In a terminal, the command shows a spinner during the download and a progress bar while it generates the icons. Without an interactive terminal, as in CI, or with `--no-interaction`, it prints one plain line per step. Either way, it ends with the number of icons it generated.
+In a terminal, the command shows a spinner during the download, asks for each family weight that is not configured, and shows a progress bar while it generates the icons. Without an interactive terminal, as in CI, or with `--no-interaction`, it asks nothing and prints one plain line per step. Either way, it ends with the number of icons it generated.
 
 If the registry rejects the token, the command says so and exits with a non-zero status. It never prints the token.
 
@@ -102,11 +129,9 @@ Once generated, use them anywhere you'd use a Flux icon:
 {{-- Brands --}}
 <flux:icon.fontawesome.brands.github />
 
-{{-- Pro families (requires FONTAWESOME_NPM_TOKEN) --}}
-<flux:icon.fontawesome.light.heart />
-<flux:icon.fontawesome.thin.heart />
-<flux:icon.fontawesome.duotone.heart />
+{{-- Pro families (requires FONTAWESOME_NPM_TOKEN), each in its configured weight --}}
 <flux:icon.fontawesome.sharp.heart />
+<flux:icon.fontawesome.duotone.heart />
 <flux:icon.fontawesome.sharp.duotone.heart />
 ```
 
@@ -116,28 +141,26 @@ Each icon supports Flux's standard `variant` prop:
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| `outline` | 24px | Default — uses the regular/outline SVG |
+| `outline` | 24px | Default — uses the family's configured weight |
 | `solid` | 24px | Filled version |
 | `mini` | 20px | Smaller outline |
 | `micro` | 16px | Smallest outline |
 
 ### Icon families
 
-| Family | Path | Package |
-|--------|------|---------|
-| Regular + Solid | `fontawesome.{icon}` | Free / Pro |
-| Brands | `fontawesome.brands.{icon}` | Free / Pro |
-| Light | `fontawesome.light.{icon}` | Pro |
-| Thin | `fontawesome.thin.{icon}` | Pro |
-| Duotone | `fontawesome.duotone.{icon}` | Pro |
-| Duotone Light | `fontawesome.duotone.light.{icon}` | Pro |
-| Duotone Thin | `fontawesome.duotone.thin.{icon}` | Pro |
-| Sharp | `fontawesome.sharp.{icon}` | Pro |
-| Sharp Light | `fontawesome.sharp.light.{icon}` | Pro |
-| Sharp Thin | `fontawesome.sharp.thin.{icon}` | Pro |
-| Sharp Duotone | `fontawesome.sharp.duotone.{icon}` | Pro |
-| Sharp Duotone Light | `fontawesome.sharp.duotone.light.{icon}` | Pro |
-| Sharp Duotone Thin | `fontawesome.sharp.duotone.thin.{icon}` | Pro |
+| Family | Path | Outline | Solid | Package |
+|--------|------|---------|-------|---------|
+| Classic | `fontawesome.{icon}` | `FONTAWESOME_CLASSIC_WEIGHT` | solid | Free (regular only) / Pro |
+| Sharp | `fontawesome.sharp.{icon}` | `FONTAWESOME_SHARP_WEIGHT` | sharp-solid | Pro |
+| Duotone | `fontawesome.duotone.{icon}` | `FONTAWESOME_DUOTONE_WEIGHT` | duotone | Pro |
+| Sharp Duotone | `fontawesome.sharp.duotone.{icon}` | `FONTAWESOME_SHARP_DUOTONE_WEIGHT` | sharp-duotone-solid | Pro |
+| Brands | `fontawesome.brands.{icon}` | brands | brands | Free / Pro |
+
+### Breaking change: the weight paths are gone
+
+Earlier versions generated a separate path for every weight, such as `fontawesome.light.{icon}`, `fontawesome.thin.{icon}`, `fontawesome.duotone.light.{icon}`, and `fontawesome.sharp.thin.{icon}`. These paths are no longer generated. Each family now has one path, and its configured weight sets the outline variant.
+
+To upgrade, set the weight of each family, then replace every weight path in your Blade views with its family path. For example, set `FONTAWESOME_CLASSIC_WEIGHT=light`, and replace `<flux:icon.fontawesome.light.heart />` with `<flux:icon.fontawesome.heart />`. A family can use only one weight at a time.
 
 ## Customizing the Stub
 
@@ -164,10 +187,11 @@ The command clears the `resources/views/flux/icon/fontawesome/` directory before
 1. Picks the package: Pro when `FONTAWESOME_NPM_TOKEN` is set, Free when it is not
 2. Reads the package information from the registry, and picks the pinned version or the latest one
 3. Downloads the package, checks it against the registry's integrity hash, and unpacks it to a temporary folder
-4. Iterates through each icon family and variant directory
-5. Extracts SVG inner content and attributes from the source `.svg` files
-6. Injects them into a Blade stub that supports Flux's `variant` prop
-7. Writes the generated components to `resources/views/flux/icon/fontawesome/`, and deletes the temporary folder
+4. Picks the outline weight of each family from the config, a prompt, or the `regular` default
+5. Iterates through each family's outline and solid directories, and the brands directory
+6. Extracts SVG inner content and attributes from the source `.svg` files
+7. Injects them into a Blade stub that supports Flux's `variant` prop
+8. Writes the generated components to `resources/views/flux/icon/fontawesome/`, and deletes the temporary folder
 
 ## License
 

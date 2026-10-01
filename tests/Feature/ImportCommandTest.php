@@ -60,8 +60,46 @@ function fakeFreeRegistry(array $tarballs, string $latest): void
         ->all());
 }
 
-it("downloads Pro with the token and generates every family", function () {
-    config(["font-awesome-to-flux.token" => PRO_TOKEN]);
+beforeEach(function (): void {
+    config(["font-awesome-to-flux.weights" => [
+        "classic" => "regular",
+        "sharp" => "regular",
+        "duotone" => "regular",
+        "sharp_duotone" => "regular",
+    ]]);
+});
+
+function generatedIconFiles(): array
+{
+    return collect(File::allFiles(resource_path("views/flux/icon/fontawesome")))
+        ->map(fn (SplFileInfo $file) => $file->getRelativePathname())
+        ->sort()
+        ->values()
+        ->all();
+}
+
+function everyFamilyFiles(): array
+{
+    return [
+        "brands/github.blade.php",
+        "duotone/heart.blade.php",
+        "heart.blade.php",
+        "sharp/duotone/heart.blade.php",
+        "sharp/heart.blade.php",
+    ];
+}
+
+function expectIconVariants(string $icon, string $outline, string $solid): void
+{
+    expect(File::get(generatedIcon($icon)))
+        ->toContain("<path d=\"M-{$outline}\"/>", "<path d=\"M-{$solid}\"/>");
+}
+
+it("generates every family with its configured weight, plus brands", function (array $weights): void {
+    config([
+        "font-awesome-to-flux.token" => PRO_TOKEN,
+        "font-awesome-to-flux.weights" => $weights,
+    ]);
     fakeProRegistry(proSvgs());
 
     $this->artisan("flux:import-fontawesome")
@@ -69,34 +107,153 @@ it("downloads Pro with the token and generates every family", function () {
         ->doesntExpectOutputToContain(PRO_TOKEN)
         ->assertSuccessful();
 
-    $families = [
-        "heart" => ["regular", "solid"],
-        "brands/github" => ["brands", "brands"],
-        "light/heart" => ["light", "solid"],
-        "thin/heart" => ["thin", "solid"],
-        "duotone/heart" => ["duotone-regular", "duotone"],
-        "duotone/light/heart" => ["duotone-light", "duotone"],
-        "duotone/thin/heart" => ["duotone-thin", "duotone"],
-        "sharp/heart" => ["sharp-regular", "sharp-solid"],
-        "sharp/light/heart" => ["sharp-light", "sharp-solid"],
-        "sharp/thin/heart" => ["sharp-thin", "sharp-solid"],
-        "sharp/duotone/heart" => ["sharp-duotone-regular", "sharp-duotone-solid"],
-        "sharp/duotone/light/heart" => ["sharp-duotone-light", "sharp-duotone-solid"],
-        "sharp/duotone/thin/heart" => ["sharp-duotone-thin", "sharp-duotone-solid"],
-    ];
-
-    foreach ($families as $icon => [$outline, $solid]) {
-        expect(generatedIcon($icon))->toBeFile()
-            ->and(File::get(generatedIcon($icon)))
-            ->toContain("<path d=\"M-{$outline}\"/>")
-            ->toContain("<path d=\"M-{$solid}\"/>");
-    }
+    expect(generatedIconFiles())->toBe(everyFamilyFiles());
+    expectIconVariants("heart", data_get($weights, "classic"), "solid");
+    expectIconVariants("sharp/heart", "sharp-" . data_get($weights, "sharp"), "sharp-solid");
+    expectIconVariants("duotone/heart", "duotone-" . data_get($weights, "duotone"), "duotone");
+    expectIconVariants(
+        "sharp/duotone/heart",
+        "sharp-duotone-" . data_get($weights, "sharp_duotone"),
+        "sharp-duotone-solid",
+    );
+    expectIconVariants("brands/github", "brands", "brands");
 
     Http::assertSentCount(2);
     Http::assertSent(fn (Request $request) => str_starts_with($request->url(), "https://npm.fontawesome.com/")
         && $request->header("Authorization") === ["Bearer " . PRO_TOKEN]);
     Http::assertNotSent(fn (Request $request) => $request->header("Authorization") !== ["Bearer " . PRO_TOKEN]);
+})->with([
+    "mixed weights" => [[
+        "classic" => "light",
+        "sharp" => "thin",
+        "duotone" => "regular",
+        "sharp_duotone" => "light",
+    ]],
+    "other mixed weights" => [[
+        "classic" => "thin",
+        "sharp" => "regular",
+        "duotone" => "light",
+        "sharp_duotone" => "thin",
+    ]],
+]);
+
+it("asks for the weight of each unconfigured family in the package when there is a terminal", function (): void {
+    config([
+        "font-awesome-to-flux.token" => PRO_TOKEN,
+        "font-awesome-to-flux.weights" => [
+            "classic" => null,
+            "sharp" => "thin",
+            "duotone" => " ",
+        ],
+    ]);
+    $sharpDuotoneIcons = collect(["regular", "solid", "light", "thin"])
+        ->map(fn (string $variant) => "sharp-duotone-{$variant}/heart.svg")
+        ->all();
+    fakeProRegistry(collect(proSvgs())
+        ->except($sharpDuotoneIcons)
+        ->all());
+
+    $this->artisan("flux:import-fontawesome")
+        ->expectsChoice(
+            "Which weight should the Classic outline variant use?",
+            "light",
+            ["regular" => "Regular", "light" => "Light", "thin" => "Thin"],
+        )
+        ->expectsChoice(
+            "Which weight should the Duotone outline variant use?",
+            "thin",
+            ["regular" => "Regular", "light" => "Light", "thin" => "Thin"],
+        )
+        ->assertSuccessful();
+
+    expect(generatedIconFiles())->toBe([
+        "brands/github.blade.php",
+        "duotone/heart.blade.php",
+        "heart.blade.php",
+        "sharp/heart.blade.php",
+    ]);
+    expectIconVariants("heart", "light", "solid");
+    expectIconVariants("sharp/heart", "sharp-thin", "sharp-solid");
+    expectIconVariants("duotone/heart", "duotone-thin", "duotone");
 });
+
+it("uses regular for every unconfigured family without asking when there is no terminal", function (): void {
+    config([
+        "font-awesome-to-flux.token" => PRO_TOKEN,
+        "font-awesome-to-flux.weights" => null,
+    ]);
+    fakeProRegistry(proSvgs());
+
+    $this->artisan("flux:import-fontawesome", ["--no-interaction" => true])
+        ->assertSuccessful();
+
+    expect(generatedIconFiles())->toBe(everyFamilyFiles());
+    expectIconVariants("heart", "regular", "solid");
+    expectIconVariants("sharp/heart", "sharp-regular", "sharp-solid");
+    expectIconVariants("duotone/heart", "duotone-regular", "duotone");
+    expectIconVariants("sharp/duotone/heart", "sharp-duotone-regular", "sharp-duotone-solid");
+});
+
+it("writes classic and brands without asking anything when Free is used", function (array $weights): void {
+    config(["font-awesome-to-flux.weights" => $weights]);
+    fakeFreeRegistry(["7.3.1" => fakeTarball(freeSvgs())], "7.3.1");
+
+    $this->artisan("flux:import-fontawesome")
+        ->assertSuccessful();
+
+    expect(generatedIconFiles())->toBe(["brands/github.blade.php", "heart.blade.php"]);
+    expectIconVariants("heart", "regular", "solid");
+})->with([
+    "nothing configured" => [[]],
+    "Pro family weights configured" => [[
+        "sharp" => "thin",
+        "duotone" => "light",
+        "sharp_duotone" => "thin",
+    ]],
+]);
+
+it("fails before downloading when classic is set to a Pro weight without a token", function (string $weight): void {
+    File::ensureDirectoryExists(dirname(generatedIcon("existing")));
+    File::put(generatedIcon("existing"), "kept");
+    config(["font-awesome-to-flux.weights.classic" => $weight]);
+    Http::fake();
+
+    $this->artisan("flux:import-fontawesome")
+        ->expectsOutputToContain(
+            "FONTAWESOME_CLASSIC_WEIGHT is set to '{$weight}', but Font Awesome Free has only "
+                . "the regular weight. Set FONTAWESOME_NPM_TOKEN to use the {$weight} weight.",
+        )
+        ->assertFailed();
+
+    expect(generatedIconFiles())->toBe(["existing.blade.php"]);
+    Http::assertNothingSent();
+})->with([
+    "light",
+    "thin",
+]);
+
+it("fails before downloading when a configured weight is unknown", function (string $family, string $variable): void {
+    File::ensureDirectoryExists(dirname(generatedIcon("existing")));
+    File::put(generatedIcon("existing"), "kept");
+    config([
+        "font-awesome-to-flux.token" => PRO_TOKEN,
+        "font-awesome-to-flux.weights.{$family}" => "solid",
+    ]);
+    Http::fake();
+
+    $this->artisan("flux:import-fontawesome")
+        ->expectsOutputToContain("{$variable} is set to 'solid'. Use one of: regular, light, thin.")
+        ->doesntExpectOutputToContain(PRO_TOKEN)
+        ->assertFailed();
+
+    expect(generatedIconFiles())->toBe(["existing.blade.php"]);
+    Http::assertNothingSent();
+})->with([
+    "classic" => ["classic", "FONTAWESOME_CLASSIC_WEIGHT"],
+    "sharp" => ["sharp", "FONTAWESOME_SHARP_WEIGHT"],
+    "duotone" => ["duotone", "FONTAWESOME_DUOTONE_WEIGHT"],
+    "sharp duotone" => ["sharp_duotone", "FONTAWESOME_SHARP_DUOTONE_WEIGHT"],
+]);
 
 it("shows a spinner and a progress bar instead of a line per icon", function () {
     config(["font-awesome-to-flux.token" => PRO_TOKEN]);
@@ -107,12 +264,12 @@ it("shows a spinner and a progress bar instead of a line per icon", function () 
         ->toContain("Downloading @fortawesome/fontawesome-pro...")
         ->toContain("Using @fortawesome/fontawesome-pro 7.0.0.")
         ->toContain("Generating Flux icons")
-        ->toContain("0 / 13")
-        ->toContain("7 / 13")
-        ->toContain("13 / 13")
-        ->toContain("Generated 13 icons.")
+        ->toContain("0 / 5")
+        ->toContain("3 / 5")
+        ->toContain("5 / 5")
+        ->toContain("Generated 5 icons.")
         ->not->toContain("Converted")
-        ->not->toContain("Generating 13 icons...")
+        ->not->toContain("Generating 5 icons...")
         ->not->toContain(PRO_TOKEN);
 });
 
@@ -124,8 +281,8 @@ it("prints plain lines without terminal control codes when there is no interacti
             "FONTAWESOME_NPM_TOKEN is not set, so FontAwesome Free is used.",
             "Downloading @fortawesome/fontawesome-free...",
             "Using @fortawesome/fontawesome-free 7.3.1.",
-            "Generating 4 icons...",
-            "Generated 4 icons.",
+            "Generating 2 icons...",
+            "Generated 2 icons.",
             "",
         ]))
         ->and(generatedIcon("heart"))->toBeFile()
@@ -360,14 +517,15 @@ it("writes the same stub output as before", function () {
 });
 
 it("replaces previously generated icons", function () {
-    File::ensureDirectoryExists(dirname(generatedIcon("stale")));
-    File::put(generatedIcon("stale"), "old");
+    foreach (["stale", "light/heart", "sharp/thin/heart", "duotone/light/heart"] as $icon) {
+        File::ensureDirectoryExists(dirname(generatedIcon($icon)));
+        File::put(generatedIcon($icon), "old");
+    }
     fakeFreeRegistry(["7.3.1" => fakeTarball(freeSvgs())], "7.3.1");
 
     $this->artisan("flux:import-fontawesome")->assertSuccessful();
 
-    expect(generatedIcon("stale"))->not->toBeFile()
-        ->and(generatedIcon("heart"))->toBeFile();
+    expect(generatedIconFiles())->toBe(["brands/github.blade.php", "heart.blade.php"]);
 });
 
 it("keeps previously generated icons when the download fails", function () {
@@ -393,5 +551,6 @@ it("publishes the config file", function () {
     expect(ServiceProvider::pathsToPublish(ServiceProvider::class, "font-awesome-to-flux-config"))
         ->toHaveCount(1)
         ->toContain(config_path("font-awesome-to-flux.php"))
-        ->and(config("font-awesome-to-flux"))->toHaveKeys(["token", "version"]);
+        ->and(config("font-awesome-to-flux"))->toHaveKeys(["token", "version", "weights"])
+        ->and(config("font-awesome-to-flux.weights"))->toHaveKeys(["classic", "sharp", "duotone", "sharp_duotone"]);
 });
