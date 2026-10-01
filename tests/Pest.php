@@ -10,7 +10,9 @@ uses(TestCase::class)->in("Feature");
 
 function svgIcon(string $path): string
 {
-    return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\"><path d=\"{$path}\"/></svg>";
+    return <<<SVG
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="{$path}"/></svg>
+        SVG;
 }
 
 function fakeTarball(array $svgs): string
@@ -22,7 +24,7 @@ function fakeTarball(array $svgs): string
 
 function rawTarball(array $files): string
 {
-    $dir = storage_path("framework/testing/fontawesome/" . Str::random(8));
+    $dir = storage_path("framework/testing/fontawesome/" . Str::random());
     File::ensureDirectoryExists($dir);
     $tar = new PharData("{$dir}/fixture.tar");
 

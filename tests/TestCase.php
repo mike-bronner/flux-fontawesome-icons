@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use MikeBronner\FontAwesomeToFluxImporter\Providers\ServiceProvider;
 use Orchestra\Testbench\TestCase as BaseTestCase;
+use Override;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -37,16 +38,13 @@ abstract class TestCase extends BaseTestCase
         parent::tearDown();
     }
 
-    /**
-     * A prompt that no test expects reads an empty stream and fails the command, instead of
-     * waiting for someone to type an answer on the terminal that runs the suite.
-     */
     protected function readPromptAnswersFromEmptyInput(CommandStarting $event): void
     {
         $input = data_get($event, "input");
         $input->setStream(fopen("php://memory", "r"));
     }
 
+    #[Override]
     protected function getPackageProviders($app): array
     {
         return [

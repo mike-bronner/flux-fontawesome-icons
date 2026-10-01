@@ -14,20 +14,22 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use PharData;
 use RuntimeException;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 use function Laravel\Prompts\progress;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\spin;
 
+#[AsCommand(
+    name: "flux:import-fontawesome",
+    description: "Download FontAwesome and convert its SVG icons to Flux icons",
+)]
 class ImportCommand extends Command
 {
-    // phpcs:disable SlevomatCodingStandard.TypeHints.PropertyTypeHint.MissingAnyTypeHint
-    protected $signature = "flux:import-fontawesome";
-    protected $description = "Download FontAwesome and convert its SVG icons to Flux icons";
-    // phpcs:enable
-
     protected const PRO_REGISTRY = "https://npm.fontawesome.com";
     protected const FREE_REGISTRY = "https://registry.npmjs.org";
+    protected const REQUEST_TIMEOUT_SECONDS = 120;
+    protected const REJECTED_TOKEN_STATUSES = [401, 403];
 
     // Each family maps to its icon path, the prefix of its outline weight directories,
     // and its solid directory in the package.
@@ -65,7 +67,8 @@ class ImportCommand extends Command
         $registry = $token !== ""
             ? self::PRO_REGISTRY
             : self::FREE_REGISTRY;
-        $workDir = storage_path("framework/fontawesome-" . Str::random(16));
+        $workDirSuffix = Str::random();
+        $workDir = storage_path("framework/fontawesome-{$workDirSuffix}");
 
         if ($token === "") {
             $this->info("FONTAWESOME_NPM_TOKEN is not set, so FontAwesome Free is used.");
@@ -73,7 +76,10 @@ class ImportCommand extends Command
 
         try {
             $configuredWeights = $this->configuredWeights();
-            $this->ensureFreeHasWeight(token: $token, weight: data_get($configuredWeights, "classic"));
+            $this->ensureFreeHasWeight(
+                token: $token,
+                weight: data_get($configuredWeights, "classic"),
+            );
 
             [$version, $svgPath] = $this->whileShowingStatus(
                 "Downloading @fortawesome/{$package}...",
@@ -87,7 +93,10 @@ class ImportCommand extends Command
 
             $this->info("Using @fortawesome/{$package} {$version}.");
 
-            $weights = $this->chosenWeights(svgPath: $svgPath, configuredWeights: $configuredWeights);
+            $weights = $this->chosenWeights(
+                svgPath: $svgPath,
+                configuredWeights: $configuredWeights,
+            );
 
             File::deleteDirectory(resource_path("views/flux/icon/fontawesome"));
             $generated = $this->generateIcons(svgPath: $svgPath, weights: $weights);
@@ -175,39 +184,66 @@ class ImportCommand extends Command
         );
     }
 
-    protected function download(string $package, string $registry, string $token, string $workDir): array
-    {
+    protected function download(
+        string $package,
+        string $registry,
+        string $token,
+        string $workDir,
+    ): array {
         $metadata = $this->registryRequest($token)
             ->accept("application/json")
             ->get("{$registry}/@fortawesome%2f{$package}");
-        $this->ensureSuccessful(response: $metadata, package: $package, what: "package information");
+        $this->ensureSuccessful(
+            response: $metadata,
+            package: $package,
+            what: "package information",
+        );
 
-        $version = (string) (config("font-awesome-to-flux.version") ?: $metadata->json("dist-tags.latest"));
+        $pinnedVersion = config("font-awesome-to-flux.version");
+        $version = (string) ($pinnedVersion ?: $metadata->json("dist-tags.latest"));
         $dist = $metadata->json("versions")[$version]["dist"] ?? null;
         $tarballUrl = (string) data_get($dist, "tarball");
         $integrity = (string) data_get($dist, "integrity");
+        $registryHost = parse_url($registry, PHP_URL_HOST);
 
-        if ($version === "" || ! is_array($dist)) {
-            throw new RuntimeException("Version '{$version}' of @fortawesome/{$package} was not found in the registry.");
+        if (
+            $version === ""
+            || ! is_array($dist)
+        ) {
+            throw new RuntimeException(
+                "Version '{$version}' of @fortawesome/{$package} was not found in the registry.",
+            );
         }
 
-        if (parse_url($tarballUrl, PHP_URL_SCHEME) !== "https"
-            || parse_url($tarballUrl, PHP_URL_HOST) !== parse_url($registry, PHP_URL_HOST)
+        if (
+            parse_url($tarballUrl, PHP_URL_SCHEME) !== "https"
+            || parse_url($tarballUrl, PHP_URL_HOST) !== $registryHost
         ) {
-            throw new RuntimeException("The registry listed a download for @fortawesome/{$package} {$version} that is not on " . parse_url($registry, PHP_URL_HOST) . ".");
+            throw new RuntimeException(
+                "The registry listed a download for @fortawesome/{$package} {$version} "
+                    . "that is not on {$registryHost}.",
+            );
         }
 
         File::ensureDirectoryExists($workDir);
         $tarballPath = "{$workDir}/package.tgz";
-        $tarball = $this->registryRequest($token)->get($tarballUrl);
+        $tarball = $this->registryRequest($token)
+            ->get($tarballUrl);
         $this->ensureSuccessful(response: $tarball, package: $package, what: "package download");
         File::put($tarballPath, $tarball->body());
-        $this->verifyIntegrity(path: $tarballPath, integrity: $integrity, package: $package, version: $version);
+        $this->verifyIntegrity(
+            path: $tarballPath,
+            integrity: $integrity,
+            package: $package,
+            version: $version,
+        );
 
         (new PharData($tarballPath))->extractTo($workDir);
 
         if (! is_dir("{$workDir}/package/svgs")) {
-            throw new RuntimeException("@fortawesome/{$package} {$version} contains no svgs directory.");
+            throw new RuntimeException(
+                "@fortawesome/{$package} {$version} contains no svgs directory.",
+            );
         }
 
         return [$version, "{$workDir}/package/svgs"];
@@ -215,35 +251,45 @@ class ImportCommand extends Command
 
     protected function registryRequest(string $token): PendingRequest
     {
-        $request = Http::timeout(120);
-
-        return $token !== ""
-            ? $request->withToken($token)
-            : $request;
+        return Http::timeout(self::REQUEST_TIMEOUT_SECONDS)
+            ->when($token !== "", fn (PendingRequest $request) => $request->withToken($token));
     }
 
     protected function ensureSuccessful(Response $response, string $package, string $what): void
     {
-        if (in_array($response->status(), [401, 403], true)) {
+        $status = $response->status();
+
+        if (in_array($status, self::REJECTED_TOKEN_STATUSES, true)) {
             throw new RuntimeException(
-                "FontAwesome's registry rejected FONTAWESOME_NPM_TOKEN (HTTP {$response->status()}). "
-                . "The token is missing, invalid, or revoked. Check the package token in your FontAwesome account.",
+                "FontAwesome's registry rejected FONTAWESOME_NPM_TOKEN (HTTP {$status}). "
+                    . "The token is missing, invalid, or revoked. "
+                    . "Check the package token in your FontAwesome account.",
             );
         }
 
         if (! $response->successful()) {
-            throw new RuntimeException("The {$what} request for @fortawesome/{$package} failed (HTTP {$response->status()}).");
+            throw new RuntimeException(
+                "The {$what} request for @fortawesome/{$package} failed (HTTP {$status}).",
+            );
         }
     }
 
-    protected function verifyIntegrity(string $path, string $integrity, string $package, string $version): void
-    {
-        [$algorithm, $expected] = array_pad(explode("-", $integrity, 2), 2, "");
+    protected function verifyIntegrity(
+        string $path,
+        string $integrity,
+        string $package,
+        string $version,
+    ): void {
+        $algorithm = Str::before($integrity, "-");
+        $expected = Str::after($integrity, "-");
 
-        if (! in_array($algorithm, ["sha512", "sha384", "sha256"], true)
+        if (
+            ! in_array($algorithm, ["sha512", "sha384", "sha256"], true)
             || ! hash_equals($expected, base64_encode(hash_file($algorithm, $path, true)))
         ) {
-            throw new RuntimeException("The download of @fortawesome/{$package} {$version} failed its integrity check.");
+            throw new RuntimeException(
+                "The download of @fortawesome/{$package} {$version} failed its integrity check.",
+            );
         }
     }
 
@@ -251,8 +297,15 @@ class ImportCommand extends Command
     {
         // Mirrors how Laravel decides whether Prompts may redraw the terminal. A CI or
         // deploy build has no TTY, so it gets no prompts and plain lines instead of escape codes.
-        return $this->input->isInteractive()
-            && ($this->laravel->runningUnitTests() || (stream_isatty(STDIN) && stream_isatty(STDOUT)));
+        return $this->input
+            ->isInteractive()
+            && (
+                $this->laravel->runningUnitTests()
+                || (
+                    stream_isatty(STDIN)
+                    && stream_isatty(STDOUT)
+                )
+            );
     }
 
     protected function whileShowingStatus(string $message, Closure $callback): mixed
@@ -285,52 +338,75 @@ class ImportCommand extends Command
         $stub = $this->loadStub();
         $write = fn (array $icon) => $this->writeIcon(icon: $icon, stub: $stub);
 
-        if ($icons !== [] && $this->hasInteractiveTerminal()) {
-            return count(array_filter(progress(label: "Generating Flux icons", steps: $icons, callback: $write)));
+        if (
+            $icons !== []
+            && $this->hasInteractiveTerminal()
+        ) {
+            $written = progress(label: "Generating Flux icons", steps: $icons, callback: $write);
+
+            return collect($written)
+                ->filter()
+                ->count();
         }
 
-        $this->line("Generating " . count($icons) . " " . Str::plural("icon", count($icons)) . "...");
+        $iconCount = count($icons);
+        $this->line("Generating {$iconCount} " . Str::plural("icon", $iconCount) . "...");
 
-        return count(array_filter(array_map($write, $icons)));
+        return collect($icons)
+            ->map($write)
+            ->filter()
+            ->count();
     }
 
-    protected function familyIcons(string $svgPath, string $family, string $outlineVariant, string $solidVariant): array
-    {
+    protected function familyIcons(
+        string $svgPath,
+        string $family,
+        string $outlineVariant,
+        string $solidVariant,
+    ): array {
         $familyPath = $family
             ? "/{$family}"
             : "";
         $outlineDir = "{$svgPath}/{$outlineVariant}";
         $solidDir = "{$svgPath}/{$solidVariant}";
 
-        if (! is_dir($outlineDir) && ! is_dir($solidDir)) {
+        if (
+            ! is_dir($outlineDir)
+            && ! is_dir($solidDir)
+        ) {
             return [];
         }
 
         $targetDir = resource_path("views/flux/icon/fontawesome{$familyPath}");
         File::ensureDirectoryExists($targetDir);
 
-        return array_map(fn (string $iconName) => [
-            "target" => "{$targetDir}/{$iconName}.blade.php",
-            "outline" => "{$outlineDir}/{$iconName}.svg",
-            "solid" => "{$solidDir}/{$iconName}.svg",
-        ], $this->collectIconNames(outlineDir: $outlineDir, solidDir: $solidDir));
+        return collect($this->collectIconNames(outlineDir: $outlineDir, solidDir: $solidDir))
+            ->map(fn (string $iconName) => [
+                "target" => "{$targetDir}/{$iconName}.blade.php",
+                "outline" => "{$outlineDir}/{$iconName}.svg",
+                "solid" => "{$solidDir}/{$iconName}.svg",
+            ])
+            ->all();
     }
 
     protected function writeIcon(array $icon, string $stub): bool
     {
-        $outlineSvg = $this->extractSvgContent(iconPath: $icon["outline"]);
-        $solidSvg = $this->extractSvgContent(iconPath: $icon["solid"]);
-        $svgAttributes = $this->extractSvgAttributes(iconPath: $icon["outline"])
-            ?: $this->extractSvgAttributes(iconPath: $icon["solid"]);
+        $outlineSvg = $this->extractSvgContent(iconPath: data_get($icon, "outline"));
+        $solidSvg = $this->extractSvgContent(iconPath: data_get($icon, "solid"));
+        $svgAttributes = $this->extractSvgAttributes(iconPath: data_get($icon, "outline"))
+            ?: $this->extractSvgAttributes(iconPath: data_get($icon, "solid"));
 
         $outlineSvg = $outlineSvg ?: $solidSvg;
         $solidSvg = $solidSvg ?: $outlineSvg;
 
-        if (! $outlineSvg && ! $solidSvg) {
+        if (
+            ! $outlineSvg
+            && ! $solidSvg
+        ) {
             return false;
         }
 
-        file_put_contents($icon["target"], str_replace(
+        file_put_contents(data_get($icon, "target"), str_replace(
             ["{SVG_ATTRIBUTES}", "{OUTLINE}", "{SOLID}"],
             [$svgAttributes, $outlineSvg, $solidSvg],
             $stub,
@@ -352,42 +428,32 @@ class ImportCommand extends Command
 
     protected function collectIconNames(string $outlineDir, string $solidDir): array
     {
-        $names = [];
-
-        foreach ([$outlineDir, $solidDir] as $dir) {
-            $svgFiles = glob($dir . "/*.svg") ?: [];
-
-            foreach ($svgFiles as $svgFile) {
-                $names[] = pathinfo($svgFile, PATHINFO_FILENAME);
-            }
-        }
-
-        return array_unique($names);
+        return collect([$outlineDir, $solidDir])
+            ->flatMap(fn (string $dir) => glob("{$dir}/*.svg") ?: [])
+            ->map(fn (string $svgFile) => pathinfo($svgFile, PATHINFO_FILENAME))
+            ->unique()
+            ->all();
     }
 
     protected function extractSvgContent(string $iconPath): string
     {
-        if (! file_exists($iconPath)) {
-            return "";
-        }
-
-        $svgContent = file_get_contents($iconPath);
-        $matches = [];
-        preg_match("/<svg[^>]*>(.*?)<\/svg>/is", $svgContent, $matches);
-
-        return data_get($matches, 1) ?: "";
+        return $this->firstSvgMatch(iconPath: $iconPath, pattern: "/<svg[^>]*>(.*?)<\/svg>/is");
     }
 
     protected function extractSvgAttributes(string $iconPath): string
+    {
+        return $this->firstSvgMatch(iconPath: $iconPath, pattern: "/<svg\s+([^>]*)>/i");
+    }
+
+    protected function firstSvgMatch(string $iconPath, string $pattern): string
     {
         if (! file_exists($iconPath)) {
             return "";
         }
 
-        $svgContent = file_get_contents($iconPath);
         $matches = [];
-        preg_match("/<svg\s+([^>]*)>/i", $svgContent, $matches);
+        preg_match($pattern, file_get_contents($iconPath), $matches);
 
-        return data_get($matches, 1) ?? "";
+        return (string) data_get($matches, 1);
     }
 }
